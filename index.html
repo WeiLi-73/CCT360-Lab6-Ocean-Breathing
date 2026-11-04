@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#071522" />
+  <title>Ocean Breathing | Live Sea Conditions</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="script.js" defer></script>
+</head>
+
+<body>
+  <main class="ocean-page">
+    <header class="topbar">
+      <a class="brand" href="./">OB<span> / Ocean Breathing</span></a>
+      <span class="edition">A LIVING SEASCAPE · 01</span>
+    </header>
+
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">LISBON COAST, PORTUGAL</p>
+      <h1 id="page-title">The ocean<br />has a rhythm.</h1>
+      <p class="description">
+        A quiet window into a moving sea.
+        Live marine data shapes the waves below.
+      </p>
+
+      <div class="actions">
+        <button id="refresh-button" type="button">
+          Refresh the sea <span aria-hidden="true">↗</span>
+        </button>
+        <p id="status" role="status" aria-live="polite">
+          Connecting to the ocean…
+        </p>
+      </div>
+    </section>
+
+    <canvas id="ocean" aria-hidden="true"></canvas>
+
+    <section class="sea-data" aria-label="Latest sea conditions">
+      <div class="data-heading">
+        <span>SEA CONDITIONS</span>
+        <span id="data-time">Awaiting data</span>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <p>Wave height</p>
+          <div><span id="wave-height">…</span><small>m</small></div>
+        </div>
+
+        <div class="metric">
+          <p>Wave period</p>
+          <div><span id="wave-period">…</span><small>s</small></div>
+        </div>
+
+        <div class="metric">
+          <p>Wave direction</p>
+          <div><span id="wave-direction">…</span><small>°</small></div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>VISUAL RHYTHM, SHAPED BY REAL DATA.</span>
+      <a
+        href="https://open-meteo.com/"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Marine model data: Open-Meteo ↗
+      </a>
+    </footer>
+  </main>
+</body>
+</html>
