@@ -1,75 +1,253 @@
-<!DOCTYPE html>
+<!doctype html>
+<!--
+  CCT360 Lab 6: Working with API
+  Project: Ocean Breathing
+  Author: Wei Li
+-->
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#071522" />
-  <title>Ocean Breathing | Live Sea Conditions</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071522">
+
+  <meta
+    name="description"
+    content="An interactive ocean soundscape shaped by current marine model data."
+  >
+
+  <title>Ocean Breathing | Wei Li | CCT360 Lab 6</title>
+
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
   <script src="script.js" defer></script>
 </head>
 
-<body>
-  <main class="ocean-page">
+<body data-mood="waiting">
+  <main class="page">
+
     <header class="topbar">
-      <a class="brand" href="./">OB<span> / Ocean Breathing</span></a>
-      <span class="edition">A LIVING SEASCAPE · 01</span>
+      <a class="brand" href="./" aria-label="Ocean Breathing home">
+        ob
+        <span>OCEAN<br>BREATHING</span>
+      </a>
+
+      <span class="edition">
+        CCT360 LAB 6 / WORKING WITH API
+      </span>
+
+      <a class="about-link" href="#about">
+        Behind the waves <span aria-hidden="true">↗</span>
+      </a>
     </header>
 
-    <section class="intro" aria-labelledby="page-title">
-      <p class="eyebrow">LISBON COAST, PORTUGAL</p>
-      <h1 id="page-title">The ocean<br />has a rhythm.</h1>
-      <p class="description">
-        A quiet window into a moving sea.
-        Live marine data shapes the waves below.
-      </p>
+    <section class="experience" aria-labelledby="title">
+      <canvas id="ocean" aria-hidden="true"></canvas>
 
-      <div class="actions">
-        <button id="refresh-button" type="button">
-          Refresh the sea <span aria-hidden="true">↗</span>
-        </button>
-        <p id="status" role="status" aria-live="polite">
-          Connecting to the ocean…
+      <div class="horizon-label" aria-hidden="true">
+        <span>THE SEA IS ALWAYS MOVING</span>
+        <span>≈</span>
+      </div>
+
+      <div class="intro">
+        <p class="eyebrow">
+          <span class="dot"></span>
+          A WINDOW INTO THE OPEN WATER
         </p>
+
+        <h1 id="title">
+          The ocean<br>
+          has a <em>rhythm.</em>
+        </h1>
+
+        <p class="description">
+          Somewhere, a wave is finding its way to shore.<br>
+          Choose a coast. See its rhythm. Listen in.
+        </p>
+
+        <div class="controls">
+          <label class="field-label" for="coast">
+            YOUR COAST
+          </label>
+
+          <select id="coast">
+            <option value="lisbon">
+              01 / Lisbon, Portugal
+            </option>
+
+            <option value="tofino">
+              02 / Tofino, Canada
+            </option>
+
+            <option value="kamakura">
+              03 / Kamakura, Japan
+            </option>
+
+            <option value="cape">
+              04 / Cape Town, South Africa
+            </option>
+          </select>
+
+          <div class="button-row">
+            <button
+              id="sound"
+              class="primary"
+              type="button"
+              aria-pressed="false"
+              disabled
+            >
+              Enable sound <span aria-hidden="true">♪</span>
+            </button>
+
+            <button id="refresh" type="button">
+              Refresh sea <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+
+          <div class="volume-row">
+            <label for="volume">Listening level</label>
+
+            <input
+              id="volume"
+              type="range"
+              min="0"
+              max="100"
+              value="45"
+            >
+
+            <output id="volume-value" for="volume">
+              45%
+            </output>
+          </div>
+
+          <p id="status" role="status" aria-live="polite">
+            Connecting to the ocean…
+          </p>
+
+          <p id="audio-status" role="status" aria-live="polite">
+            Sound is off. Enable it to hear this sea.
+          </p>
+        </div>
+      </div>
+
+      <div class="scene-caption">
+        <span id="location">LISBON COAST / PORTUGAL</span>
+        <span id="coordinates">38.50° N · 9.60° W</span>
       </div>
     </section>
 
-    <canvas id="ocean" aria-hidden="true"></canvas>
+    <section
+      class="data-panel"
+      aria-label="Current marine model conditions"
+      aria-busy="true"
+    >
+      <div class="panel-heading">
+        <span>
+          <span class="dot"></span>
+          CURRENT MARINE MODEL
+        </span>
 
-    <section class="sea-data" aria-label="Latest sea conditions">
-      <div class="data-heading">
-        <span>SEA CONDITIONS</span>
-        <span id="data-time">Awaiting data</span>
+        <span class="mood" id="mood">AWAITING DATA</span>
       </div>
 
       <div class="metrics">
         <div class="metric">
-          <p>Wave height</p>
-          <div><span id="wave-height">…</span><small>m</small></div>
+          <span class="metric-label">01 / WAVE HEIGHT</span>
+
+          <p>
+            <span id="wave-height">…</span><small>m</small>
+          </p>
+
+          <span class="metric-note">
+            Shapes the waves & sound intensity
+          </span>
         </div>
 
         <div class="metric">
-          <p>Wave period</p>
-          <div><span id="wave-period">…</span><small>s</small></div>
+          <span class="metric-label">02 / WAVE PERIOD</span>
+
+          <p>
+            <span id="wave-period">…</span><small>s</small>
+          </p>
+
+          <span class="metric-note">
+            Sets the visual & audio rhythm
+          </span>
         </div>
 
         <div class="metric">
-          <p>Wave direction</p>
-          <div><span id="wave-direction">…</span><small>°</small></div>
+          <span class="metric-label">03 / WAVE DIRECTION</span>
+
+          <p>
+            <span id="arrow" aria-hidden="true">↑</span>
+            <span id="wave-direction">…</span><small>°</small>
+          </p>
+
+          <span class="metric-note">
+            Direction waves come from
+          </span>
         </div>
+      </div>
+
+      <div class="timestamps">
+        <span id="model-time">Model time: awaiting data</span>
+        <span id="fetched-time">Not fetched yet</span>
+        <span>Auto refresh / every 1 min while visible</span>
+      </div>
+    </section>
+
+    <section id="about" class="about" aria-labelledby="about-title">
+      <div>
+        <p class="eyebrow">MADE OF DATA. FELT AS A MOMENT.</p>
+
+        <h2 id="about-title">
+          A different way<br>
+          to feel the numbers.
+        </h2>
+      </div>
+
+      <div class="about-copy">
+        <p>
+          This sea is drawn, not filmed. Wave height shapes its scale
+          and palette. Wave period sets its pace. Direction guides its
+          sideways movement and the compass above.
+        </p>
+
+        <p>
+          With sound enabled, a synthesized ocean follows the same data:
+          higher waves create a fuller sound, and longer periods create
+          slower swells. These are artistic interpretations, not
+          recordings from the coast.
+        </p>
+
+        <p class="source-note">
+          Conditions come from Open-Meteo marine models, not a live
+          camera or a local sensor. Refreshing retrieves the latest
+          available values; they may stay the same between model updates.
+          This is an artwork, not a navigation tool.
+        </p>
       </div>
     </section>
 
     <footer>
-      <span>VISUAL RHYTHM, SHAPED BY REAL DATA.</span>
+      <span>CCT360 LAB 6 · OCEAN BREATHING · WEI LI</span>
+
       <a
-        href="https://open-meteo.com/"
+        href="https://open-meteo.com/en/docs/marine-weather-api"
         target="_blank"
         rel="noopener noreferrer"
       >
-        Marine model data: Open-Meteo ↗
+        Marine data: Open-Meteo · CC BY 4.0 ↗
       </a>
+
+      <span>TAKE A BREATH. STAY A WHILE.</span>
     </footer>
+
+    <noscript>
+      <p class="no-script">
+        Please enable JavaScript to load marine data and experience
+        the waves.
+      </p>
+    </noscript>
   </main>
 </body>
 </html>

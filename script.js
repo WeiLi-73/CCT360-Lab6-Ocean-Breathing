@@ -1,175 +1,663 @@
-const refreshButton = document.querySelector("#refresh-button");
-const statusText = document.querySelector("#status");
-const heightText = document.querySelector("#wave-height");
-const periodText = document.querySelector("#wave-period");
-const directionText = document.querySelector("#wave-direction");
-const dataTime = document.querySelector("#data-time");
+/*
+  CCT360 Lab 6: Working with API
+  Project: Ocean Breathing
+  Author: Wei Li
 
-const canvas = document.querySelector("#ocean");
-const context = canvas.getContext("2d");
+  Data:
+  Open-Meteo Marine API
+
+  Data-driven properties:
+  1. Text: wave height, period, direction and sea state.
+  2. Visuals: wave amplitude and colour palette.
+  3. Behaviour: wave rhythm, lateral movement and compass.
+  4. Sound: surf intensity, tone and swell rhythm.
+*/
+
+"use strict";
+
+/* 1. Locations and page elements */
+
+const coasts = {
+  lisbon: {
+    name: "LISBON COAST / PORTUGAL",
+    lat: 38.5,
+    lon: -9.6
+  },
+
+  tofino: {
+    name: "TOFINO COAST / CANADA",
+    lat: 49.0,
+    lon: -126.2
+  },
+
+  kamakura: {
+    name: "KAMAKURA COAST / JAPAN",
+    lat: 35.15,
+    lon: 139.5
+  },
+
+  cape: {
+    name: "CAPE TOWN COAST / SOUTH AFRICA",
+    lat: -34.1,
+    lon: 18.1
+  }
+};
+
+const $ = (selector) => document.querySelector(selector);
+
+const canvas = $("#ocean");
+const ctx = canvas.getContext("2d");
 
 const reducedMotion = window.matchMedia(
   "(prefers-reduced-motion: reduce)"
 );
 
-let width = 0;
-let height = 0;
-let targetAmplitude = 0;
-let amplitude = 0;
-let hasData = false;
+const AUTO_REFRESH = 60 * 1000;
 
-// A sea location off the Lisbon coast.
-const apiURL =
-  "https://marine-api.open-meteo.com/v1/marine" +
-  "?latitude=38.5&longitude=-9.6" +
-  "&current=wave_height,wave_period,wave_direction" +
-  "&timezone=GMT";
+let sea = null;
+let controller = null;
+let requestID = 0;
+let loading = false;
+let lastFetched = 0;
+
+let width = 1;
+let height = 1;
+let phase = 0;
+let lastFrame = 0;
+let amplitude = 0;
+
+let audio = null;
+let soundOn = false;
+let soundBusy = false;
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function coordinates(lat, lon) {
+  const latitude = Math.abs(lat).toFixed(2);
+  const longitude = Math.abs(lon).toFixed(2);
+
+  const northSouth = lat >= 0 ? "N" : "S";
+  const eastWest = lon >= 0 ? "E" : "W";
+
+  return `${latitude}° ${northSouth} · ${longitude}° ${eastWest}`;
+}
+
+function moodForHeight(value) {
+  // These are artistic labels, not official safety classifications.
+  if (value < 1) return "calm";
+  if (value < 2.5) return "moderate";
+
+  return "energetic";
+}
+
+function updateLocation() {
+  const place = coasts[$("#coast").value];
+
+  $("#location").textContent = place.name;
+
+  $("#coordinates").textContent = coordinates(
+    place.lat,
+    place.lon
+  );
+}
+
+/* Clear the previous coast before loading a different location. */
+
+function resetSea() {
+  sea = null;
+  amplitude = 0;
+  lastFetched = 0;
+
+  document.body.dataset.mood = "waiting";
+
+  [
+    "#wave-height",
+    "#wave-period",
+    "#wave-direction"
+  ].forEach((id) => {
+    $(id).textContent = "…";
+  });
+
+  $("#mood").textContent = "AWAITING DATA";
+
+  $("#model-time").textContent = "Model time: awaiting data";
+  $("#fetched-time").textContent = "Not fetched yet";
+
+  $("#arrow").style.transform = "rotate(0deg)";
+
+  updateAudio();
+  drawOcean();
+}
+
+/* 2. Fetch and process current marine model data */
 
 async function loadSeaData() {
-  refreshButton.disabled = true;
-  statusText.textContent = "Reading the latest sea conditions…";
+  const id = ++requestID;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  // Cancel an older request when a newer request starts.
+  if (controller) {
+    controller.abort();
+  }
+
+  controller = new AbortController();
+  const activeController = controller;
+
+  loading = true;
+
+  $("#refresh").disabled = true;
+  $("#sound").disabled = !sea || soundBusy;
+
+  $(".data-panel").setAttribute("aria-busy", "true");
+
+  $("#status").textContent =
+    "Reading the latest available sea conditions…";
+
+  const place = coasts[$("#coast").value];
+
+  const params = new URLSearchParams({
+    latitude: place.lat,
+    longitude: place.lon,
+    current: "wave_height,wave_period,wave_direction",
+    timezone: "GMT"
+  });
+
+  const url =
+    `https://marine-api.open-meteo.com/v1/marine?${params}`;
+
+  const timeout = setTimeout(() => {
+    activeController.abort();
+  }, 15000);
 
   try {
-    const response = await fetch(apiURL, {
-      signal: controller.signal
+    const response = await fetch(url, {
+      signal: activeController.signal
     });
 
     if (!response.ok) {
-      throw new Error("The marine service could not be reached.");
+      throw new Error(
+        `Marine service returned ${response.status}`
+      );
     }
 
-    const result = await response.json();
-    const sea = result.current;
+    const data = await response.json();
+    const current = data.current;
 
     const values = [
-      sea?.wave_height,
-      sea?.wave_period,
-      sea?.wave_direction
+      current?.wave_height,
+      current?.wave_period,
+      current?.wave_direction
     ];
 
-    if (!values.every(Number.isFinite)) {
-      throw new Error("Some sea conditions are unavailable.");
+    const validNumbers = values.every(Number.isFinite);
+
+    if (
+      !validNumbers ||
+      current.wave_height < 0 ||
+      current.wave_period < 0 ||
+      current.wave_direction < 0 ||
+      current.wave_direction > 360 ||
+      typeof current.time !== "string"
+    ) {
+      throw new Error("Incomplete marine data");
     }
 
-    heightText.textContent = sea.wave_height.toFixed(1);
-    periodText.textContent = sea.wave_period.toFixed(1);
-    directionText.textContent = Math.round(sea.wave_direction);
+    // Ignore a response if the visitor has already changed coast.
+    if (id !== requestID) return;
 
-    dataTime.textContent =
-      `MODEL TIME · ${sea.time.replace("T", " ")} UTC`;
+    sea = {
+      height: current.wave_height,
+      period: current.wave_period,
+      direction: current.wave_direction
+    };
 
-    // Convert wave height in metres into a visible drawing amplitude.
-    // Keep a limit so large values do not overwhelm the page.
-    targetAmplitude = Math.min(100, sea.wave_height * 22);
+    $("#wave-height").textContent = sea.height.toFixed(1);
+    $("#wave-period").textContent = sea.period.toFixed(1);
 
-    hasData = true;
-    statusText.textContent =
-      "Sea updated. Wave height now shapes the scene.";
+    $("#wave-direction").textContent =
+      Math.round(sea.direction);
+
+    $("#arrow").style.transform =
+      `rotate(${sea.direction}deg)`;
+
+    const mood = moodForHeight(sea.height);
+
+    document.body.dataset.mood = mood;
+
+    $("#mood").textContent =
+      `${mood.toUpperCase()} SEA`;
+
+    $("#model-time").textContent =
+      `Model time: ${current.time.replace("T", " ")} UTC`;
+
+    lastFetched = Date.now();
+
+    const localTime = new Date(lastFetched).toLocaleTimeString(
+      [],
+      {
+        hour: "2-digit",
+        minute: "2-digit"
+      }
+    );
+
+    $("#fetched-time").textContent =
+      `Fetched: ${localTime} (your time)`;
+
+    $("#status").textContent =
+      "Sea connected. These values shape the scene below.";
+
+    updateAudio();
 
     if (reducedMotion.matches) {
-      amplitude = targetAmplitude;
-      drawOcean(0);
+      amplitude = targetAmplitude();
+      drawOcean();
     }
   } catch (error) {
-    statusText.textContent = hasData
-      ? "Could not refresh. Showing the last loaded sea conditions."
-      : "Could not load sea data. Please try Refresh the sea.";
+    if (id !== requestID) return;
 
-    console.error("Marine data request failed:", error);
+    $("#status").textContent = sea
+      ? "Refresh failed. Keeping this coast’s last loaded data. Try again."
+      : "Sea data unavailable. Check your connection and try Refresh sea.";
+
+    console.warn("Marine request:", error.message);
   } finally {
     clearTimeout(timeout);
-    refreshButton.disabled = false;
+
+    if (id === requestID) {
+      loading = false;
+
+      $("#refresh").disabled = false;
+      $("#sound").disabled = !sea || soundBusy;
+
+      $(".data-panel").setAttribute("aria-busy", "false");
+    }
   }
+}
+
+/* 3. Draw data-driven waves */
+
+function targetAmplitude() {
+  if (!sea) return 0;
+
+  return Math.min(
+    height * 0.15,
+    sea.height * Math.min(width / 24, 25)
+  );
 }
 
 function resizeCanvas() {
   const bounds = canvas.getBoundingClientRect();
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
   width = bounds.width;
   height = bounds.height;
 
+  const pixelRatio = Math.min(
+    window.devicePixelRatio || 1,
+    2
+  );
+
   canvas.width = Math.round(width * pixelRatio);
   canvas.height = Math.round(height * pixelRatio);
 
-  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.setTransform(
+    pixelRatio,
+    0,
+    0,
+    pixelRatio,
+    0,
+    0
+  );
 
   if (reducedMotion.matches) {
-    drawOcean(0);
+    amplitude = targetAmplitude();
   }
+
+  drawOcean();
 }
 
-function drawOcean(time) {
-  context.clearRect(0, 0, width, height);
+function drawOcean() {
+  ctx.clearRect(0, 0, width, height);
 
-  // Do not draw a simulated sea before real data arrives.
-  if (!hasData) return;
+  // Never present invented values as real marine data.
+  if (!sea) return;
 
-  for (let layer = 0; layer < 5; layer++) {
-    const baseline = height * 0.54 + layer * 32;
-    const phase = time * (0.00016 + layer * 0.000025);
+  const colours = {
+    calm: [138, 224, 209],
+    moderate: [132, 191, 231],
+    energetic: [186, 169, 234]
+  };
 
-    context.beginPath();
+  const mood = moodForHeight(sea.height);
+  const rgb = colours[mood].join(",");
 
-    for (let x = 0; x <= width + 8; x += 8) {
+  // API direction is the bearing waves come from.
+  // Its east/west component guides the sideways animation.
+  const lateral =
+    -Math.sin(sea.direction * Math.PI / 180);
+
+  const mobile = width < 560;
+
+  for (let layer = 0; layer < 16; layer++) {
+    const baseline =
+      height * (mobile ? 0.78 : 0.49) +
+      layer * (mobile ? 6 : 10);
+
+    ctx.beginPath();
+
+    for (let x = 0; x <= width + 6; x += 6) {
+      const position = x / width;
+
+      // Keep the waves quieter behind the title on desktop.
+      const envelope = mobile
+        ? 0.8
+        : 0.22 + 0.78 * Math.pow(position, 1.3);
+
+      const primaryWave = Math.sin(
+        position * 7.4 -
+        phase * lateral +
+        layer * 0.18
+      );
+
+      const secondaryWave = Math.sin(
+        position * 13 +
+        phase * 0.55 +
+        layer * 0.12
+      );
+
       const y =
         baseline +
-        Math.sin(x * 0.004 + phase + layer * 0.7) *
-          amplitude +
-        Math.sin(x * 0.008 - phase * 0.7) *
-          amplitude * 0.25;
+        envelope *
+        amplitude *
+        (primaryWave + 0.34 * secondaryWave);
 
       if (x === 0) {
-        context.moveTo(x, y);
+        ctx.moveTo(x, y);
       } else {
-        context.lineTo(x, y);
+        ctx.lineTo(x, y);
       }
     }
 
-    context.lineTo(width, height);
-    context.lineTo(0, height);
-    context.closePath();
+    const opacity = 0.12 + layer * 0.017;
 
-    const fill = context.createLinearGradient(
-      0, baseline - amplitude, 0, height
-    );
+    ctx.strokeStyle = `rgba(${rgb}, ${opacity})`;
+    ctx.lineWidth = layer % 5 === 0 ? 1.5 : 0.7;
 
-    fill.addColorStop(0, `rgba(108, 192, 211, ${0.1 + layer * 0.015})`);
-    fill.addColorStop(1, "rgba(7, 21, 34, 0.08)");
+    ctx.stroke();
 
-    context.fillStyle = fill;
-    context.fill();
+    if (layer === 15) {
+      ctx.lineTo(width, height);
+      ctx.lineTo(0, height);
+      ctx.closePath();
 
-    context.strokeStyle = `rgba(169, 227, 237, ${0.2 - layer * 0.025})`;
-    context.lineWidth = 1;
-    context.stroke();
+      const fill = ctx.createLinearGradient(
+        0,
+        baseline - amplitude,
+        0,
+        height
+      );
+
+      fill.addColorStop(0, `rgba(${rgb}, 0.10)`);
+      fill.addColorStop(1, `rgba(${rgb}, 0)`);
+
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
   }
 }
 
-let previousTime = 0;
+function animate(timestamp) {
+  const seconds = lastFrame
+    ? Math.min((timestamp - lastFrame) / 1000, 0.05)
+    : 0;
 
-function animate(time) {
-  const elapsed = previousTime
-    ? Math.min(time - previousTime, 64)
-    : 16;
+  lastFrame = timestamp;
 
-  previousTime = time;
+  if (!document.hidden && !reducedMotion.matches) {
+    if (sea) {
+      // Longer wave periods create slower visual breathing.
+      const period = clamp(sea.period || 1, 1, 25);
 
-  // Smooth the transition when refreshed data changes the wave height.
-  amplitude +=
-    (targetAmplitude - amplitude) *
-    (1 - Math.exp(-elapsed / 500));
+      phase += seconds * Math.PI * 2 / period;
+    }
 
-  drawOcean(reducedMotion.matches ? 0 : time);
+    // Smooth changes instead of suddenly jumping to a new height.
+    amplitude +=
+      (targetAmplitude() - amplitude) *
+      (1 - Math.exp(-seconds * 3));
+
+    drawOcean();
+  }
+
   requestAnimationFrame(animate);
 }
 
-refreshButton.addEventListener("click", loadSeaData);
-window.addEventListener("resize", resizeCanvas);
+/* 4. Synthesized ocean audio */
 
+/*
+  Filtered noise creates a soft surf texture.
+  A slow oscillator shapes its swell.
+
+  Wave height controls intensity and tone.
+  Wave period controls the duration of each swell.
+*/
+
+function createAudio() {
+  const AudioContextClass =
+    window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextClass) {
+    throw new Error("Web Audio is unavailable");
+  }
+
+  const ac = new AudioContextClass();
+
+  const buffer = ac.createBuffer(
+    1,
+    ac.sampleRate * 5,
+    ac.sampleRate
+  );
+
+  const samples = buffer.getChannelData(0);
+
+  let previous = 0;
+
+  for (let i = 0; i < samples.length; i++) {
+    const random = Math.random() * 2 - 1;
+
+    previous = (previous + random * 0.025) / 1.025;
+    samples[i] = previous * 6;
+  }
+
+  const source = ac.createBufferSource();
+
+  source.buffer = buffer;
+  source.loop = true;
+
+  const filter = ac.createBiquadFilter();
+
+  filter.type = "lowpass";
+  filter.Q.value = 0.4;
+
+  const swell = ac.createGain();
+  swell.gain.value = 0.65;
+
+  const lfo = ac.createOscillator();
+  lfo.type = "sine";
+
+  const depth = ac.createGain();
+  depth.gain.value = 0.28;
+
+  const master = ac.createGain();
+  master.gain.value = 0;
+
+  const limiter = ac.createDynamicsCompressor();
+
+  source
+    .connect(filter)
+    .connect(swell)
+    .connect(master)
+    .connect(limiter)
+    .connect(ac.destination);
+
+  lfo.connect(depth).connect(swell.gain);
+
+  source.start();
+  lfo.start();
+
+  return {
+    ac,
+    filter,
+    lfo,
+    master
+  };
+}
+
+function updateAudio() {
+  if (!audio) return;
+
+  const now = audio.ac.currentTime;
+  const level = Number($("#volume").value) / 100;
+
+  const intensity = sea
+    ? clamp(0.12 + sea.height * 0.09, 0.12, 0.45)
+    : 0;
+
+  const gain =
+    soundOn && sea && !document.hidden
+      ? level * intensity
+      : 0;
+
+  // Fade changes to avoid sudden audio jumps.
+  audio.master.gain.setTargetAtTime(
+    gain,
+    now,
+    0.35
+  );
+
+  if (sea) {
+    const frequency = clamp(
+      450 + sea.height * 200,
+      450,
+      1800
+    );
+
+    audio.filter.frequency.setTargetAtTime(
+      frequency,
+      now,
+      0.5
+    );
+
+    const period = clamp(sea.period || 1, 1, 25);
+
+    audio.lfo.frequency.setTargetAtTime(
+      1 / period,
+      now,
+      0.5
+    );
+  }
+}
+
+async function toggleSound() {
+  if (!sea || soundBusy) return;
+
+  soundBusy = true;
+  $("#sound").disabled = true;
+
+  try {
+    // Audio is only created after a deliberate button click.
+    if (!audio) {
+      audio = createAudio();
+    }
+
+    if (!soundOn) {
+      await audio.ac.resume();
+    }
+
+    soundOn = !soundOn;
+
+    $("#sound").setAttribute(
+      "aria-pressed",
+      String(soundOn)
+    );
+
+    $("#sound").innerHTML = soundOn
+      ? 'Mute sound <span aria-hidden="true">♪</span>'
+      : 'Enable sound <span aria-hidden="true">♪</span>';
+
+    $("#audio-status").textContent = soundOn
+      ? "Sound on. Wave height and period shape the synthesized surf."
+      : "Sound is off. Enable it to hear this sea.";
+
+    updateAudio();
+  } catch (error) {
+    soundOn = false;
+
+    $("#sound").setAttribute("aria-pressed", "false");
+
+    $("#sound").innerHTML =
+      'Enable sound <span aria-hidden="true">♪</span>';
+
+    $("#audio-status").textContent =
+      "Audio could not start. Try again or use another browser.";
+
+    updateAudio();
+  } finally {
+    soundBusy = false;
+    $("#sound").disabled = !sea;
+  }
+}
+
+/* 5. User interactions */
+
+$("#coast").addEventListener("change", () => {
+  updateLocation();
+  resetSea();
+  loadSeaData();
+});
+
+$("#refresh").addEventListener("click", loadSeaData);
+
+$("#sound").addEventListener("click", toggleSound);
+
+$("#volume").addEventListener("input", () => {
+  $("#volume-value").textContent =
+    `${$("#volume").value}%`;
+
+  updateAudio();
+});
+
+/* 6. Refresh and visibility handling */
+
+setInterval(() => {
+  if (!document.hidden && !loading) {
+    loadSeaData();
+  }
+}, AUTO_REFRESH);
+
+document.addEventListener("visibilitychange", () => {
+  // Silence the sound when the visitor moves to another tab.
+  updateAudio();
+
+  const refreshDue =
+    Date.now() - lastFetched >= AUTO_REFRESH;
+
+  if (!document.hidden && !loading && refreshDue) {
+    loadSeaData();
+  }
+});
+
+new ResizeObserver(resizeCanvas).observe(canvas);
+
+reducedMotion.addEventListener("change", () => {
+  amplitude = targetAmplitude();
+  drawOcean();
+});
+
+/* 7. Start the experience */
+
+updateLocation();
 resizeCanvas();
-requestAnimationFrame(animate);
 loadSeaData();
+
+requestAnimationFrame(animate);
